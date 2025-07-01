@@ -18,6 +18,7 @@ let canPlay = false;
 let notificationsEnabled = false;
 let pendingMove = null;
 let savedRooms = JSON.parse(localStorage.getItem('connect4Rooms') || '[]');
+let practiceMode = false;
 
 linkInput.value = window.location.href;
 shareLink.classList.remove('hidden');
@@ -132,9 +133,15 @@ function updatePlayerIndicators() {
 
 function handleCellClick(e) {
     e.preventDefault();
-    if (!canPlay || !gameState || gameState.winner) return;
     
     const column = parseInt(e.currentTarget.dataset.column);
+    
+    if (practiceMode) {
+        socket.emit('practice-move', { roomId, column });
+        return;
+    }
+    
+    if (!canPlay || !gameState || gameState.winner) return;
     
     if (gameState.currentPlayer !== playerNumber) {
         gameStatus.textContent = "Wait for your turn!";
@@ -296,10 +303,16 @@ socket.on('player-number', (number) => {
 });
 
 socket.on('waiting-for-player', () => {
-    gameStatus.textContent = 'Waiting for opponent... Share the link above!';
+    gameStatus.innerHTML = `
+        <div>Waiting for opponent... Share the link above!</div>
+        <button onclick="startPractice()" class="btn btn-small btn-secondary" style="margin-top: 10px">Practice While Waiting</button>
+    `;
 });
 
 socket.on('game-start', (state) => {
+    if (practiceMode) {
+        endPractice();
+    }
     gameState = state;
     canPlay = true;
     gameStatus.textContent = `Game started! Player ${state.currentPlayer} goes first.`;
@@ -408,6 +421,9 @@ socket.on('game-reset', (state) => {
 
 socket.on('rematch-requested', () => {
     gameStatus.textContent = 'Opponent wants a rematch!';
+    if (window.showRematchNotification) {
+        window.showRematchNotification(roomId);
+    }
 });
 
 socket.on('player-disconnected', () => {
@@ -418,6 +434,68 @@ socket.on('player-disconnected', () => {
 socket.on('error', (message) => {
     alert(message);
     window.location.href = '/';
+});
+
+socket.on('practice-started', () => {
+    canPlay = true;
+    gameStatus.innerHTML = `
+        <div>Practice Mode - You're playing both sides!</div>
+        <div style="margin-top: 10px">
+            <button onclick="resetPractice()" class="btn btn-small btn-secondary">Reset Board</button>
+            <button onclick="endPractice()" class="btn btn-small btn-primary">End Practice</button>
+        </div>
+    `;
+});
+
+socket.on('practice-move-made', (data) => {
+    placePiece(data.row, data.column, data.player);
+    gameState.currentPlayer = gameState.currentPlayer === 1 ? 2 : 1;
+    updatePlayerIndicators();
+});
+
+socket.on('practice-won', (data) => {
+    placePiece(data.row, data.column, data.player);
+    gameStatus.innerHTML = `
+        <div>Player ${data.player} wins in practice!</div>
+        <div style="margin-top: 10px">
+            <button onclick="resetPractice()" class="btn btn-small btn-primary">Play Again</button>
+            <button onclick="endPractice()" class="btn btn-small btn-secondary">End Practice</button>
+        </div>
+    `;
+});
+
+socket.on('practice-draw', (data) => {
+    placePiece(data.row, data.column, data.player);
+    gameStatus.innerHTML = `
+        <div>Draw in practice!</div>
+        <div style="margin-top: 10px">
+            <button onclick="resetPractice()" class="btn btn-small btn-primary">Play Again</button>
+            <button onclick="endPractice()" class="btn btn-small btn-secondary">End Practice</button>
+        </div>
+    `;
+});
+
+socket.on('practice-reset', () => {
+    board.querySelectorAll('.piece').forEach(piece => piece.remove());
+    gameState.currentPlayer = 1;
+    updatePlayerIndicators();
+    gameStatus.innerHTML = `
+        <div>Practice Mode - Board reset!</div>
+        <div style="margin-top: 10px">
+            <button onclick="resetPractice()" class="btn btn-small btn-secondary">Reset Board</button>
+            <button onclick="endPractice()" class="btn btn-small btn-primary">End Practice</button>
+        </div>
+    `;
+});
+
+socket.on('practice-ended', () => {
+    practiceMode = false;
+    canPlay = false;
+    board.querySelectorAll('.piece').forEach(piece => piece.remove());
+    gameStatus.innerHTML = `
+        <div>Waiting for opponent... Share the link above!</div>
+        <button onclick="startPractice()" class="btn btn-small btn-secondary" style="margin-top: 10px">Practice While Waiting</button>
+    `;
 });
 
 rematchBtn.addEventListener('click', () => {
@@ -445,9 +523,27 @@ function showSavedRooms() {
     alert(roomList);
 }
 
+function startPractice() {
+    practiceMode = true;
+    socket.emit('start-practice', { roomId });
+}
+
+function endPractice() {
+    practiceMode = false;
+    socket.emit('end-practice', { roomId });
+    updateBoard();
+}
+
+function resetPractice() {
+    socket.emit('reset-practice', { roomId });
+}
+
 window.confirmMove = confirmMove;
 window.cancelMove = cancelMove;
 window.showSavedRooms = showSavedRooms;
+window.startPractice = startPractice;
+window.endPractice = endPractice;
+window.resetPractice = resetPractice;
 
 createBoard();
 loadGameHistory();
@@ -456,9 +552,10 @@ async function setupNotifications() {
     const script = document.createElement('script');
     script.type = 'module';
     script.textContent = `
-        import { initNotifications, showTurnNotification, askForNotificationPermission } from '/js/notifications.js';
+        import { initNotifications, showTurnNotification, showRematchNotification, askForNotificationPermission } from '/js/notifications.js';
         
         window.showTurnNotification = showTurnNotification;
+        window.showRematchNotification = showRematchNotification;
         
         setTimeout(() => {
             askForNotificationPermission();

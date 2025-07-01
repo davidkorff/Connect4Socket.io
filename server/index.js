@@ -33,7 +33,9 @@ app.post('/api/create-room', async (req, res) => {
         winner: null,
         roomId: roomId,
         pendingMove: null,
-        score: { player1: 0, player2: 0, draws: 0 }
+        score: { player1: 0, player2: 0, draws: 0 },
+        practiceMode: false,
+        practiceBoard: null
     };
     
     games.set(roomId, gameState);
@@ -170,6 +172,62 @@ io.on('connection', (socket) => {
             game.pendingMove = null;
             socket.emit('move-cancelled');
         }
+    });
+
+    socket.on('start-practice', ({ roomId }) => {
+        const game = games.get(roomId);
+        if (!game || game.players.length > 1) return;
+        
+        game.practiceMode = true;
+        game.practiceBoard = JSON.parse(JSON.stringify(game.board));
+        socket.emit('practice-started');
+    });
+
+    socket.on('practice-move', ({ roomId, column }) => {
+        const game = games.get(roomId);
+        if (!game || !game.practiceMode || game.players.length > 1) return;
+        
+        for (let row = 5; row >= 0; row--) {
+            if (game.practiceBoard[row][column] === 0) {
+                game.practiceBoard[row][column] = game.currentPlayer;
+                
+                const moveData = {
+                    row,
+                    column,
+                    player: game.currentPlayer,
+                    board: game.practiceBoard
+                };
+                
+                if (checkWinner(game.practiceBoard, row, column, game.currentPlayer)) {
+                    socket.emit('practice-won', moveData);
+                } else if (isBoardFull(game.practiceBoard)) {
+                    socket.emit('practice-draw', moveData);
+                } else {
+                    game.currentPlayer = game.currentPlayer === 1 ? 2 : 1;
+                    socket.emit('practice-move-made', moveData);
+                }
+                break;
+            }
+        }
+    });
+
+    socket.on('reset-practice', ({ roomId }) => {
+        const game = games.get(roomId);
+        if (!game || !game.practiceMode) return;
+        
+        game.practiceBoard = Array(6).fill(null).map(() => Array(7).fill(0));
+        game.currentPlayer = 1;
+        socket.emit('practice-reset');
+    });
+
+    socket.on('end-practice', ({ roomId }) => {
+        const game = games.get(roomId);
+        if (!game) return;
+        
+        game.practiceMode = false;
+        game.practiceBoard = null;
+        game.currentPlayer = 1;
+        socket.emit('practice-ended');
     });
 
     socket.on('request-rematch', async (roomId) => {

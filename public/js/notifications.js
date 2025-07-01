@@ -71,6 +71,40 @@ async function showTurnNotification(roomId, opponentPlayer) {
     }
 }
 
+async function showRematchNotification(roomId) {
+    if (!shouldShowNotification()) return;
+
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        const roomUrl = `${window.location.origin}/game/${roomId}`;
+        
+        await registration.showNotification('Connect 4 - Rematch Request!', {
+            body: 'Your opponent wants to play again!',
+            icon: '/images/icon-placeholder.svg',
+            badge: '/images/icon-placeholder.svg',
+            tag: 'rematch-notification',
+            requireInteraction: true,
+            vibrate: [200, 100, 200, 100, 200],
+            data: {
+                url: roomUrl,
+                roomId: roomId
+            },
+            actions: [
+                {
+                    action: 'play',
+                    title: 'Play Again'
+                },
+                {
+                    action: 'dismiss',
+                    title: 'Later'
+                }
+            ]
+        });
+    } catch (error) {
+        console.error('Error showing notification:', error);
+    }
+}
+
 function askForNotificationPermission() {
     if ('Notification' in window && Notification.permission === 'default') {
         const banner = document.createElement('div');
@@ -125,4 +159,4 @@ function showSuccessMessage(message) {
     }, 3000);
 }
 
-export { initNotifications, showTurnNotification, askForNotificationPermission };
+export { initNotifications, showTurnNotification, showRematchNotification, askForNotificationPermission };
