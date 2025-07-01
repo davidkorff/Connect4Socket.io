@@ -24,7 +24,14 @@
         <div class="game-container">
             <div id="board" class="board"></div>
             
+            <div id="actionButtons" class="action-buttons hidden">
+                <button onclick="confirmMove()" class="btn btn-primary">Confirm Move</button>
+                <button onclick="cancelMove()" class="btn btn-secondary">Change Move</button>
+            </div>
+            
             <div class="game-info">
+                <div id="scoreDisplay" class="score-display"></div>
+                
                 <div class="players">
                     <div id="player1" class="player player1">
                         <div class="player-indicator"></div>
@@ -39,6 +46,7 @@
                 <div id="gameResult" class="game-result hidden"></div>
                 <button id="rematchBtn" class="btn btn-primary hidden">Rematch</button>
                 <button id="newGameBtn" class="btn btn-secondary">New Game Room</button>
+                <button onclick="showSavedRooms()" class="btn btn-secondary">My Rooms</button>
             </div>
         </div>
         

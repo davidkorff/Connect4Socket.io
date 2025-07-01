@@ -206,6 +206,22 @@ h1 {
     animation: pulse 1s ease-in-out infinite;
 }
 
+.piece.pending-piece {
+    opacity: 0.6;
+    animation: pending-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes pending-pulse {
+    0%, 100% {
+        transform: scale(0.95);
+        opacity: 0.5;
+    }
+    50% {
+        transform: scale(1.05);
+        opacity: 0.7;
+    }
+}
+
 @keyframes drop {
     0% {
         transform: translateY(-400px) scale(0.8);
@@ -423,6 +439,41 @@ h1 {
 
 .toast.error {
     background: #ef4444;
+}
+
+.action-buttons {
+    text-align: center;
+    margin: 15px 0;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.score-display {
+    display: flex;
+    justify-content: space-around;
+    background: #f3f4f6;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-weight: bold;
+}
+
+.score-item {
+    text-align: center;
+}
+
+.score-label {
+    display: block;
+    font-size: 0.9rem;
+    color: #6b7280;
+    margin-bottom: 5px;
+}
+
+.score-value {
+    display: block;
+    font-size: 1.5rem;
+    color: #1f2937;
 }
 
 @media (max-width: 768px) {

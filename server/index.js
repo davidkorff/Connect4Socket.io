@@ -31,7 +31,9 @@ app.post('/api/create-room', async (req, res) => {
         board: Array(6).fill(null).map(() => Array(7).fill(0)),
         currentPlayer: 1,
         winner: null,
-        roomId: roomId
+        roomId: roomId,
+        pendingMove: null,
+        score: { player1: 0, player2: 0, draws: 0 }
     };
     
     games.set(roomId, gameState);
@@ -87,6 +89,9 @@ io.on('connection', (socket) => {
             await db.saveGameState(roomId, game);
         }
 
+        const score = await db.getScore(roomId);
+        game.score = { player1: score.player1_wins, player2: score.player2_wins, draws: score.draws };
+
         if (game.players.length === 2) {
             io.to(roomId).emit('game-start', game);
         } else {
@@ -96,10 +101,29 @@ io.on('connection', (socket) => {
         socket.emit('game-state', game);
     });
 
-    socket.on('make-move', async ({ roomId, column }) => {
+    socket.on('preview-move', ({ roomId, column }) => {
         const game = games.get(roomId);
         
         if (!game || game.winner) return;
+        
+        const playerIndex = game.players.indexOf(socket.id);
+        if (playerIndex === -1 || playerIndex + 1 !== game.currentPlayer) {
+            return;
+        }
+
+        for (let row = 5; row >= 0; row--) {
+            if (game.board[row][column] === 0) {
+                game.pendingMove = { row, column, player: game.currentPlayer };
+                socket.emit('move-preview', game.pendingMove);
+                break;
+            }
+        }
+    });
+
+    socket.on('confirm-move', async ({ roomId }) => {
+        const game = games.get(roomId);
+        
+        if (!game || game.winner || !game.pendingMove) return;
         
         const playerIndex = game.players.indexOf(socket.id);
         if (playerIndex === -1 || playerIndex + 1 !== game.currentPlayer) {
@@ -107,33 +131,44 @@ io.on('connection', (socket) => {
             return;
         }
 
-        for (let row = 5; row >= 0; row--) {
-            if (game.board[row][column] === 0) {
-                game.board[row][column] = game.currentPlayer;
-                
-                const moveData = {
-                    row,
-                    column,
-                    player: game.currentPlayer
-                };
-                
-                if (checkWinner(game.board, row, column, game.currentPlayer)) {
-                    game.winner = game.currentPlayer;
-                    await db.saveGameHistory(roomId, game.currentPlayer, calculateMoves(game.board), game.board);
-                    await db.saveGameState(roomId, game);
-                    io.to(roomId).emit('game-won', { ...game, lastMove: moveData });
-                } else if (isBoardFull(game.board)) {
-                    game.winner = 'draw';
-                    await db.saveGameHistory(roomId, 'draw', calculateMoves(game.board), game.board);
-                    await db.saveGameState(roomId, game);
-                    io.to(roomId).emit('game-draw', { ...game, lastMove: moveData });
-                } else {
-                    game.currentPlayer = game.currentPlayer === 1 ? 2 : 1;
-                    await db.saveGameState(roomId, game);
-                    io.to(roomId).emit('move-made', { ...game, lastMove: moveData });
-                }
-                break;
-            }
+        const { row, column, player } = game.pendingMove;
+        game.board[row][column] = player;
+        
+        const moveData = {
+            row,
+            column,
+            player: player
+        };
+        
+        if (checkWinner(game.board, row, column, player)) {
+            game.winner = player;
+            await db.updateScore(roomId, player);
+            await db.saveGameHistory(roomId, player, calculateMoves(game.board), game.board);
+            await db.saveGameState(roomId, game);
+            const updatedScore = await db.getScore(roomId);
+            game.score = { player1: updatedScore.player1_wins, player2: updatedScore.player2_wins, draws: updatedScore.draws };
+            io.to(roomId).emit('game-won', { ...game, lastMove: moveData });
+        } else if (isBoardFull(game.board)) {
+            game.winner = 'draw';
+            await db.updateScore(roomId, 'draw');
+            await db.saveGameHistory(roomId, 'draw', calculateMoves(game.board), game.board);
+            await db.saveGameState(roomId, game);
+            const updatedScore = await db.getScore(roomId);
+            game.score = { player1: updatedScore.player1_wins, player2: updatedScore.player2_wins, draws: updatedScore.draws };
+            io.to(roomId).emit('game-draw', { ...game, lastMove: moveData });
+        } else {
+            game.currentPlayer = game.currentPlayer === 1 ? 2 : 1;
+            game.pendingMove = null;
+            await db.saveGameState(roomId, game);
+            io.to(roomId).emit('move-made', { ...game, lastMove: moveData });
+        }
+    });
+
+    socket.on('cancel-move', ({ roomId }) => {
+        const game = games.get(roomId);
+        if (game) {
+            game.pendingMove = null;
+            socket.emit('move-cancelled');
         }
     });
 
@@ -151,9 +186,13 @@ io.on('connection', (socket) => {
         }
 
         if (game.rematchRequests.length === 2) {
+            await db.toggleStartingPlayer(roomId);
+            const score = await db.getScore(roomId);
+            
             game.board = Array(6).fill(null).map(() => Array(7).fill(0));
-            game.currentPlayer = 1;
+            game.currentPlayer = score.starting_player;
             game.winner = null;
+            game.pendingMove = null;
             game.rematchRequests = [];
             await db.saveGameState(roomId, game);
             io.to(roomId).emit('game-reset', game);

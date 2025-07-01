@@ -16,6 +16,8 @@ let playerNumber = null;
 let gameState = null;
 let canPlay = false;
 let notificationsEnabled = false;
+let pendingMove = null;
+let savedRooms = JSON.parse(localStorage.getItem('connect4Rooms') || '[]');
 
 linkInput.value = window.location.href;
 shareLink.classList.remove('hidden');
@@ -103,6 +105,24 @@ function placePiece(row, column, player) {
     cellEl.appendChild(piece);
 }
 
+function placePendingPiece(row, column, player) {
+    removePendingPiece();
+    
+    const cells = board.querySelectorAll('.cell');
+    const cellEl = cells[row * 7 + column];
+    
+    const piece = document.createElement('div');
+    piece.className = `piece player${player} pending-piece`;
+    cellEl.appendChild(piece);
+}
+
+function removePendingPiece() {
+    const pendingPiece = board.querySelector('.pending-piece');
+    if (pendingPiece) {
+        pendingPiece.remove();
+    }
+}
+
 function updatePlayerIndicators() {
     if (!gameState) return;
     
@@ -121,12 +141,44 @@ function handleCellClick(e) {
         return;
     }
     
-    socket.emit('make-move', { roomId, column });
+    if (pendingMove && pendingMove.column === column) {
+        confirmMove();
+    } else {
+        socket.emit('preview-move', { roomId, column });
+    }
 }
 
 function handleTouchStart(e) {
     e.preventDefault();
     handleCellClick(e);
+}
+
+function confirmMove() {
+    if (!pendingMove) return;
+    socket.emit('confirm-move', { roomId });
+    hideActionButtons();
+}
+
+function cancelMove() {
+    if (!pendingMove) return;
+    removePendingPiece();
+    pendingMove = null;
+    socket.emit('cancel-move', { roomId });
+    hideActionButtons();
+}
+
+function showActionButtons() {
+    const actionButtons = document.getElementById('actionButtons');
+    if (actionButtons) {
+        actionButtons.classList.remove('hidden');
+    }
+}
+
+function hideActionButtons() {
+    const actionButtons = document.getElementById('actionButtons');
+    if (actionButtons) {
+        actionButtons.classList.add('hidden');
+    }
 }
 
 function highlightWinningPieces() {
@@ -179,6 +231,38 @@ function checkWinningPiece(board, row, col, player) {
     return false;
 }
 
+function updateScoreDisplay() {
+    if (!gameState || !gameState.score) return;
+    
+    const scoreEl = document.getElementById('scoreDisplay');
+    if (scoreEl) {
+        scoreEl.innerHTML = `
+            <div class="score-item">
+                <span class="score-label">Player 1</span>
+                <span class="score-value">${gameState.score.player1}</span>
+            </div>
+            <div class="score-item">
+                <span class="score-label">Draws</span>
+                <span class="score-value">${gameState.score.draws}</span>
+            </div>
+            <div class="score-item">
+                <span class="score-label">Player 2</span>
+                <span class="score-value">${gameState.score.player2}</span>
+            </div>
+        `;
+    }
+}
+
+function saveRoomToLocalStorage() {
+    if (!savedRooms.includes(roomId)) {
+        savedRooms.push(roomId);
+        if (savedRooms.length > 10) {
+            savedRooms.shift();
+        }
+        localStorage.setItem('connect4Rooms', JSON.stringify(savedRooms));
+    }
+}
+
 function loadGameHistory() {
     fetch(`/api/game-history/${roomId}`)
         .then(res => res.json())
@@ -218,13 +302,16 @@ socket.on('waiting-for-player', () => {
 socket.on('game-start', (state) => {
     gameState = state;
     canPlay = true;
-    gameStatus.textContent = 'Game started! Player 1 goes first.';
+    gameStatus.textContent = `Game started! Player ${state.currentPlayer} goes first.`;
     updateBoard();
+    updateScoreDisplay();
+    saveRoomToLocalStorage();
 });
 
 socket.on('game-state', (state) => {
     gameState = state;
     updateBoard();
+    updateScoreDisplay();
     
     if (!gameState.winner && gameState.players.length === 2) {
         canPlay = true;
@@ -233,10 +320,24 @@ socket.on('game-state', (state) => {
     }
 });
 
+socket.on('move-preview', (move) => {
+    pendingMove = move;
+    placePendingPiece(move.row, move.column, move.player);
+    showActionButtons();
+});
+
+socket.on('move-cancelled', () => {
+    removePendingPiece();
+    pendingMove = null;
+    hideActionButtons();
+});
+
 socket.on('move-made', (state) => {
     const lastMove = state.lastMove;
     gameState = state;
     
+    removePendingPiece();
+    pendingMove = null;
     placePiece(lastMove.row, lastMove.column, lastMove.player);
     updateBoard(false);
     
@@ -255,10 +356,15 @@ socket.on('game-won', (state) => {
     gameState = state;
     canPlay = false;
     
+    removePendingPiece();
+    pendingMove = null;
+    hideActionButtons();
+    
     if (lastMove) {
         placePiece(lastMove.row, lastMove.column, lastMove.player);
     }
     updateBoard(false);
+    updateScoreDisplay();
     
     const winnerText = state.winner === playerNumber ? 'You won!' : 'You lost!';
     gameResult.textContent = winnerText;
@@ -295,8 +401,9 @@ socket.on('game-reset', (state) => {
     canPlay = true;
     gameResult.classList.add('hidden');
     rematchBtn.classList.add('hidden');
-    gameStatus.textContent = 'New game started! Player 1 goes first.';
+    gameStatus.textContent = `New game started! Player ${state.currentPlayer} goes first.`;
     updateBoard();
+    updateScoreDisplay();
 });
 
 socket.on('rematch-requested', () => {
@@ -322,6 +429,25 @@ rematchBtn.addEventListener('click', () => {
 newGameBtn.addEventListener('click', () => {
     window.location.href = '/';
 });
+
+function showSavedRooms() {
+    const rooms = JSON.parse(localStorage.getItem('connect4Rooms') || '[]');
+    if (rooms.length === 0) {
+        alert('No saved rooms yet. Play some games and they will be saved automatically!');
+        return;
+    }
+    
+    let roomList = 'Your recent game rooms:\n\n';
+    rooms.forEach((room, index) => {
+        roomList += `${index + 1}. ${window.location.origin}/game/${room}\n`;
+    });
+    
+    alert(roomList);
+}
+
+window.confirmMove = confirmMove;
+window.cancelMove = cancelMove;
+window.showSavedRooms = showSavedRooms;
 
 createBoard();
 loadGameHistory();

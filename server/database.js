@@ -14,7 +14,12 @@ async function initDatabase() {
         CREATE TABLE IF NOT EXISTS game_rooms (
             room_id TEXT PRIMARY KEY,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_activity DATETIME DEFAULT CURRENT_TIMESTAMP
+            last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+            player1_wins INTEGER DEFAULT 0,
+            player2_wins INTEGER DEFAULT 0,
+            draws INTEGER DEFAULT 0,
+            games_played INTEGER DEFAULT 0,
+            starting_player INTEGER DEFAULT 1
         );
 
         CREATE TABLE IF NOT EXISTS game_history (
@@ -35,6 +40,7 @@ async function initDatabase() {
             current_player INTEGER NOT NULL,
             players TEXT NOT NULL,
             winner TEXT,
+            pending_move TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (room_id) REFERENCES game_rooms(room_id)
         );
@@ -104,6 +110,40 @@ async function updateRoomActivity(roomId) {
     `, roomId);
 }
 
+async function updateScore(roomId, winner) {
+    if (winner === 'draw') {
+        await db.run(`
+            UPDATE game_rooms 
+            SET draws = draws + 1, games_played = games_played + 1
+            WHERE room_id = ?
+        `, roomId);
+    } else {
+        const column = winner === 1 ? 'player1_wins' : 'player2_wins';
+        await db.run(`
+            UPDATE game_rooms 
+            SET ${column} = ${column} + 1, games_played = games_played + 1
+            WHERE room_id = ?
+        `, roomId);
+    }
+}
+
+async function getScore(roomId) {
+    const row = await db.get(`
+        SELECT player1_wins, player2_wins, draws, games_played, starting_player
+        FROM game_rooms 
+        WHERE room_id = ?
+    `, roomId);
+    return row || { player1_wins: 0, player2_wins: 0, draws: 0, games_played: 0, starting_player: 1 };
+}
+
+async function toggleStartingPlayer(roomId) {
+    await db.run(`
+        UPDATE game_rooms 
+        SET starting_player = CASE WHEN starting_player = 1 THEN 2 ELSE 1 END
+        WHERE room_id = ?
+    `, roomId);
+}
+
 module.exports = {
     initDatabase,
     createRoom,
@@ -112,5 +152,8 @@ module.exports = {
     saveGameHistory,
     getGameHistory,
     roomExists,
-    updateRoomActivity
+    updateRoomActivity,
+    updateScore,
+    getScore,
+    toggleStartingPlayer
 };
