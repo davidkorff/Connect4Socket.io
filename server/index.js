@@ -287,17 +287,19 @@ io.on('connection', (socket) => {
         socket.emit('practice-ended');
     });
 
-    socket.on('request-rematch', async (roomId) => {
+    socket.on('request-rematch', async (data) => {
+        const { roomId, quick } = data;
         const game = games.get(roomId);
         if (!game) return;
 
         if (!game.rematchRequests) {
             game.rematchRequests = [];
+            game.rematchRequestTime = Date.now();
         }
 
         if (!game.rematchRequests.includes(socket.id)) {
             game.rematchRequests.push(socket.id);
-            socket.to(roomId).emit('rematch-requested');
+            socket.to(roomId).emit('rematch-requested', { quick });
         }
 
         if (game.rematchRequests.length === 2) {
@@ -309,9 +311,42 @@ io.on('connection', (socket) => {
             game.winner = null;
             game.pendingMove = null;
             game.rematchRequests = [];
+            game.rematchRequestTime = null;
             await db.saveGameState(roomId, game);
             io.to(roomId).emit('game-reset', game);
         }
+    });
+    
+    socket.on('accept-rematch', async (roomId) => {
+        const game = games.get(roomId);
+        if (!game || !game.rematchRequests || game.rematchRequests.length === 0) return;
+        
+        if (!game.rematchRequests.includes(socket.id)) {
+            game.rematchRequests.push(socket.id);
+        }
+        
+        if (game.rematchRequests.length === 2) {
+            await db.toggleStartingPlayer(roomId);
+            const score = await db.getScore(roomId);
+            
+            game.board = Array(6).fill(null).map(() => Array(7).fill(0));
+            game.currentPlayer = score.starting_player;
+            game.winner = null;
+            game.pendingMove = null;
+            game.rematchRequests = [];
+            game.rematchRequestTime = null;
+            await db.saveGameState(roomId, game);
+            io.to(roomId).emit('game-reset', game);
+        }
+    });
+    
+    socket.on('decline-rematch', async (roomId) => {
+        const game = games.get(roomId);
+        if (!game) return;
+        
+        game.rematchRequests = [];
+        game.rematchRequestTime = null;
+        socket.to(roomId).emit('rematch-declined');
     });
 
     socket.on('disconnect', () => {

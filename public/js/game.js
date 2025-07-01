@@ -14,6 +14,8 @@ const gameHistoryEl = document.getElementById('gameHistory');
 const opponentStatusEl = document.getElementById('opponentStatus');
 const statusDotEl = opponentStatusEl.querySelector('.status-dot');
 const statusTextEl = opponentStatusEl.querySelector('.status-text');
+const rematchModal = document.getElementById('rematchModal');
+const rematchModalBody = document.getElementById('rematchModalBody');
 
 let playerNumber = null;
 let gameState = null;
@@ -23,6 +25,9 @@ let pendingMove = null;
 let savedRooms = JSON.parse(localStorage.getItem('connect4Rooms') || '[]');
 let practiceMode = false;
 let connectionCheckInterval = null;
+let rematchCountdown = null;
+let gameEndTime = null;
+let rematchRequestTime = null;
 
 // Get or create persistent player ID
 function getPlayerId() {
@@ -439,6 +444,7 @@ socket.on('game-won', (state) => {
     const lastMove = state.lastMove;
     gameState = state;
     canPlay = false;
+    gameEndTime = Date.now();
     
     removePendingPiece();
     pendingMove = null;
@@ -496,15 +502,42 @@ socket.on('game-reset', (state) => {
     canPlay = true;
     gameResult.classList.add('hidden');
     rematchBtn.classList.add('hidden');
-    gameStatus.textContent = `New game started! Player ${state.currentPlayer} goes first.`;
-    updateBoard();
-    updateScoreDisplay();
+    rematchBtn.disabled = false;
+    
+    // Hide rematch modal and show celebration
+    hideRematchModal();
+    showRematchCelebration();
+    
+    // Animate board clear before updating
+    animateBoardClear();
+    
+    setTimeout(() => {
+        gameStatus.textContent = `🎮 New game! Player ${state.currentPlayer} goes first.`;
+        updateBoard();
+        updateScoreDisplay();
+    }, 600);
 });
 
-socket.on('rematch-requested', () => {
-    gameStatus.textContent = 'Opponent wants a rematch!';
-    if (window.showRematchNotification) {
-        window.showRematchNotification(roomId);
+socket.on('rematch-requested', (data) => {
+    if (data && data.quick && gameEndTime && (Date.now() - gameEndTime) < 3000) {
+        // Auto-accept quick rematch
+        socket.emit('accept-rematch', roomId);
+        hideRematchModal();
+        
+        // Show quick rematch message
+        rematchModalBody.innerHTML = `
+            <div class="quick-rematch">
+                <h2>⚡ Quick Rematch! ⚡</h2>
+                <p>Both players want to go again!</p>
+            </div>
+        `;
+        rematchModal.classList.remove('hidden');
+        setTimeout(() => hideRematchModal(), 1500);
+    } else {
+        showRematchModal(false);
+        if (window.showRematchNotification) {
+            window.showRematchNotification(roomId);
+        }
     }
 });
 
@@ -614,10 +647,115 @@ socket.on('early-move-made', (state) => {
     canPlay = false;
 });
 
+socket.on('rematch-declined', () => {
+    hideRematchModal();
+    gameStatus.textContent = '❌ Rematch declined. Start a new game or wait for another request.';
+    rematchBtn.disabled = false;
+});
+
+function showRematchModal(isRequester = false) {
+    if (isRequester) {
+        rematchModalBody.innerHTML = `
+            <div class="rematch-request">
+                <h2>Rematch Requested! ⏳</h2>
+                <p>Waiting for opponent to accept...</p>
+                <div class="countdown">15</div>
+            </div>
+        `;
+    } else {
+        rematchModalBody.innerHTML = `
+            <div class="rematch-request">
+                <h2>Rematch? 🎮</h2>
+                <p>Your opponent wants to play again!</p>
+                <div class="countdown">15</div>
+                <div class="rematch-buttons">
+                    <button onclick="acceptRematch()" class="btn btn-accept">Accept</button>
+                    <button onclick="declineRematch()" class="btn btn-secondary">Decline</button>
+                </div>
+            </div>
+        `;
+    }
+    
+    rematchModal.classList.remove('hidden');
+    startRematchCountdown();
+}
+
+function startRematchCountdown() {
+    let timeLeft = 15;
+    const countdownEl = rematchModal.querySelector('.countdown');
+    
+    rematchCountdown = setInterval(() => {
+        timeLeft--;
+        if (countdownEl) {
+            countdownEl.textContent = timeLeft;
+        }
+        
+        if (timeLeft <= 0) {
+            clearInterval(rematchCountdown);
+            hideRematchModal();
+            gameStatus.textContent = 'Rematch request expired';
+        }
+    }, 1000);
+}
+
+function hideRematchModal() {
+    rematchModal.classList.add('hidden');
+    if (rematchCountdown) {
+        clearInterval(rematchCountdown);
+        rematchCountdown = null;
+    }
+}
+
+function acceptRematch() {
+    socket.emit('accept-rematch', roomId);
+    hideRematchModal();
+}
+
+function declineRematch() {
+    socket.emit('decline-rematch', roomId);
+    hideRematchModal();
+    gameStatus.textContent = 'Rematch declined';
+}
+
+function animateBoardClear() {
+    const pieces = board.querySelectorAll('.piece');
+    board.classList.add('board-clear-animation');
+    
+    pieces.forEach((piece, index) => {
+        setTimeout(() => {
+            piece.classList.add('falling-out');
+        }, index * 30);
+    });
+    
+    setTimeout(() => {
+        pieces.forEach(piece => piece.remove());
+        board.classList.remove('board-clear-animation');
+    }, 600);
+}
+
+function showRematchCelebration() {
+    const celebration = document.createElement('div');
+    celebration.className = 'rematch-celebration';
+    celebration.textContent = '🎮 REMATCH! 🎮';
+    document.body.appendChild(celebration);
+    
+    setTimeout(() => {
+        celebration.remove();
+    }, 1000);
+}
+
+window.acceptRematch = acceptRematch;
+window.declineRematch = declineRematch;
+
 rematchBtn.addEventListener('click', () => {
-    socket.emit('request-rematch', roomId);
+    rematchRequestTime = Date.now();
+    const timeSinceEnd = rematchRequestTime - gameEndTime;
+    
+    // Quick rematch if both click within 3 seconds
+    socket.emit('request-rematch', { roomId, quick: timeSinceEnd < 3000 });
+    
     rematchBtn.disabled = true;
-    rematchBtn.textContent = 'Waiting for opponent...';
+    showRematchModal(true);
 });
 
 newGameBtn.addEventListener('click', () => {
