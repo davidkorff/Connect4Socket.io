@@ -41,6 +41,7 @@ function createBoard() {
             cellEl.dataset.column = col;
             cellEl.dataset.row = row;
             cellEl.addEventListener('click', handleCellClick);
+            cellEl.addEventListener('touchstart', handleTouchStart);
             cellEl.addEventListener('mouseenter', handleCellHover);
             cellEl.addEventListener('mouseleave', handleCellLeave);
             rowEl.appendChild(cellEl);
@@ -110,6 +111,7 @@ function updatePlayerIndicators() {
 }
 
 function handleCellClick(e) {
+    e.preventDefault();
     if (!canPlay || !gameState || gameState.winner) return;
     
     const column = parseInt(e.currentTarget.dataset.column);
@@ -120,6 +122,11 @@ function handleCellClick(e) {
     }
     
     socket.emit('make-move', { roomId, column });
+}
+
+function handleTouchStart(e) {
+    e.preventDefault();
+    handleCellClick(e);
 }
 
 function highlightWinningPieces() {
