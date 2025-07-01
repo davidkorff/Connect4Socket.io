@@ -99,6 +99,8 @@ io.on('connection', (socket) => {
         if (game.players.length === 2) {
             game.gameStarted = true;
             io.to(roomId).emit('game-start', game);
+            // Notify both players are connected
+            io.to(roomId).emit('opponent-connected');
         } else {
             socket.emit('waiting-for-player');
             if (game.players.length === 1) {
@@ -288,10 +290,25 @@ io.on('connection', (socket) => {
         for (const [roomId, game] of games.entries()) {
             const playerIndex = game.players.indexOf(socket.id);
             if (playerIndex !== -1) {
-                game.players.splice(playerIndex, 1);
-                io.to(roomId).emit('player-disconnected');
+                // Don't remove player, just mark as disconnected
+                socket.to(roomId).emit('opponent-disconnected', playerIndex + 1);
+                
+                // Set a timeout to remove player after 30 seconds
+                setTimeout(() => {
+                    const currentGame = games.get(roomId);
+                    if (currentGame && !io.sockets.sockets.get(socket.id)) {
+                        const idx = currentGame.players.indexOf(socket.id);
+                        if (idx !== -1) {
+                            currentGame.players.splice(idx, 1);
+                        }
+                    }
+                }, 30000);
             }
         }
+    });
+    
+    socket.on('ping', () => {
+        socket.emit('pong');
     });
 });
 

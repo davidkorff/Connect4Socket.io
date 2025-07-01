@@ -11,6 +11,9 @@ const newGameBtn = document.getElementById('newGameBtn');
 const player1El = document.getElementById('player1');
 const player2El = document.getElementById('player2');
 const gameHistoryEl = document.getElementById('gameHistory');
+const opponentStatusEl = document.getElementById('opponentStatus');
+const statusDotEl = opponentStatusEl.querySelector('.status-dot');
+const statusTextEl = opponentStatusEl.querySelector('.status-text');
 
 let playerNumber = null;
 let gameState = null;
@@ -19,6 +22,7 @@ let notificationsEnabled = false;
 let pendingMove = null;
 let savedRooms = JSON.parse(localStorage.getItem('connect4Rooms') || '[]');
 let practiceMode = false;
+let connectionCheckInterval = null;
 
 linkInput.value = window.location.href;
 shareLink.classList.remove('hidden');
@@ -304,9 +308,9 @@ socket.on('player-number', (number) => {
 
 socket.on('waiting-for-player', () => {
     gameStatus.innerHTML = `
-        <div>Waiting for opponent... Share the link above!</div>
+        <div>📤 Share the link above to invite a friend!</div>
         <div style="margin-top: 10px">
-            <button onclick="startPractice()" class="btn btn-small btn-secondary">Practice While Waiting</button>
+            <button onclick="startPractice()" class="btn btn-small btn-secondary">🎮 Practice While Waiting</button>
         </div>
     `;
 });
@@ -314,9 +318,9 @@ socket.on('waiting-for-player', () => {
 socket.on('can-make-first-move', () => {
     canPlay = true;
     gameStatus.innerHTML = `
-        <div>You can make the first move while waiting for your opponent!</div>
+        <div>🚀 Go ahead! Make the first move while waiting for your opponent.</div>
         <div style="margin-top: 10px">
-            <button onclick="startPractice()" class="btn btn-small btn-secondary">Practice Instead</button>
+            <button onclick="startPractice()" class="btn btn-small btn-secondary">🎮 Practice Instead</button>
         </div>
     `;
 });
@@ -328,12 +332,17 @@ socket.on('game-start', (state) => {
     gameState = state;
     canPlay = true;
     
+    // Show connection status
+    opponentStatusEl.classList.remove('hidden');
+    statusDotEl.className = 'status-dot connected';
+    statusTextEl.textContent = 'Opponent Connected';
+    
     // Check if Player 1 already made a move
     const movesAlreadyMade = state.board.some(row => row.some(cell => cell !== 0));
     if (movesAlreadyMade && state.currentPlayer === 2) {
-        gameStatus.textContent = `Game started! Player 1 already made their move. Player 2's turn!`;
+        gameStatus.textContent = `🎮 Game ON! Player 1 went first. Your turn, Player 2!`;
     } else {
-        gameStatus.textContent = `Game started! Player ${state.currentPlayer} goes first.`;
+        gameStatus.textContent = `🎮 Game ON! Player ${state.currentPlayer} goes first.`;
     }
     
     updateBoard();
@@ -348,8 +357,11 @@ socket.on('game-state', (state) => {
     
     if (!gameState.winner && gameState.players.length === 2) {
         canPlay = true;
-        const currentPlayerText = gameState.currentPlayer === playerNumber ? 'Your turn!' : "Opponent's turn";
-        gameStatus.textContent = currentPlayerText;
+        if (gameState.currentPlayer === playerNumber) {
+            gameStatus.textContent = '🎯 Your turn! Click a column to drop your piece.';
+        } else {
+            gameStatus.textContent = '⏳ Opponent is thinking...';
+        }
     }
 });
 
@@ -375,11 +387,13 @@ socket.on('move-made', (state) => {
     updateBoard(false);
     
     if (!gameState.winner && gameState.players.length === 2) {
-        const currentPlayerText = gameState.currentPlayer === playerNumber ? 'Your turn!' : "Opponent's turn";
-        gameStatus.textContent = currentPlayerText;
-        
-        if (gameState.currentPlayer === playerNumber && window.showTurnNotification) {
-            window.showTurnNotification(roomId, lastMove.player);
+        if (gameState.currentPlayer === playerNumber) {
+            gameStatus.textContent = '🎯 Your turn! Click a column to drop your piece.';
+            if (window.showTurnNotification) {
+                window.showTurnNotification(roomId, lastMove.player);
+            }
+        } else {
+            gameStatus.textContent = '⏳ Opponent is thinking...';
         }
     }
 });
@@ -399,12 +413,18 @@ socket.on('game-won', (state) => {
     updateBoard(false);
     updateScoreDisplay();
     
-    const winnerText = state.winner === playerNumber ? 'You won!' : 'You lost!';
+    const isWinner = state.winner === playerNumber;
+    const winnerText = isWinner ? '🎉 Victory!' : '😔 Defeat';
     gameResult.textContent = winnerText;
-    gameResult.className = `game-result winner ${state.winner === playerNumber ? 'winner' : ''}`;
+    gameResult.className = `game-result winner ${isWinner ? 'winner' : ''}`;
     gameResult.classList.remove('hidden');
     rematchBtn.classList.remove('hidden');
-    gameStatus.textContent = `Player ${state.winner} wins!`;
+    
+    if (isWinner) {
+        gameStatus.textContent = '🏆 Congratulations! You won this round!';
+    } else {
+        gameStatus.textContent = '💪 Good game! Better luck next time!';
+    }
     
     highlightWinningPieces();
     loadGameHistory();
@@ -415,16 +435,21 @@ socket.on('game-draw', (state) => {
     gameState = state;
     canPlay = false;
     
+    removePendingPiece();
+    pendingMove = null;
+    hideActionButtons();
+    
     if (lastMove) {
         placePiece(lastMove.row, lastMove.column, lastMove.player);
     }
     updateBoard(false);
+    updateScoreDisplay();
     
-    gameResult.textContent = "It's a draw!";
+    gameResult.textContent = "🤝 It's a tie!";
     gameResult.className = 'game-result draw';
     gameResult.classList.remove('hidden');
     rematchBtn.classList.remove('hidden');
-    gameStatus.textContent = "Game ended in a draw!";
+    gameStatus.textContent = "🎯 Well matched! The board is full with no winner.";
     
     loadGameHistory();
 });
@@ -443,6 +468,22 @@ socket.on('rematch-requested', () => {
     gameStatus.textContent = 'Opponent wants a rematch!';
     if (window.showRematchNotification) {
         window.showRematchNotification(roomId);
+    }
+});
+
+socket.on('opponent-connected', () => {
+    if (gameState && gameState.players.length === 2) {
+        opponentStatusEl.classList.remove('hidden');
+        statusDotEl.className = 'status-dot connected';
+        statusTextEl.textContent = 'Opponent Connected';
+    }
+});
+
+socket.on('opponent-disconnected', (playerNum) => {
+    if (playerNum !== playerNumber && gameState && gameState.players.length === 2) {
+        statusDotEl.className = 'status-dot disconnected';
+        statusTextEl.textContent = 'Opponent Disconnected';
+        gameStatus.textContent = '⚠️ Opponent disconnected - They have 30s to reconnect';
     }
 });
 
@@ -528,9 +569,9 @@ socket.on('early-move-made', (state) => {
     updateBoard(false);
     
     gameStatus.innerHTML = `
-        <div>Your move has been made! Waiting for opponent to join and play...</div>
+        <div>✅ Nice opening move! Now waiting for your opponent...</div>
         <div style="margin-top: 10px">
-            <button onclick="startPractice()" class="btn btn-small btn-secondary">Practice While Waiting</button>
+            <button onclick="startPractice()" class="btn btn-small btn-secondary">🎮 Practice While Waiting</button>
         </div>
     `;
     canPlay = false;
