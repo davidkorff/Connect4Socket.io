@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect 4 - Game Room</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#667eea">
+</head>
+<body>
+    <div class="container">
+        <div class="game-header">
+            <h1>Connect 4</h1>
+            <div id="gameStatus" class="game-status">
+                <span class="loading-dots">Connecting<span>.</span><span>.</span><span>.</span></span>
+            </div>
+            <div id="shareLink" class="share-link hidden">
+                <input type="text" id="linkInput" readonly>
+                <button id="copyLink" class="btn btn-small">Copy Link</button>
+            </div>
+        </div>
+        
+        <div class="game-container">
+            <div id="board" class="board"></div>
+            
+            <div class="game-info">
+                <div class="players">
+                    <div id="player1" class="player player1">
+                        <div class="player-indicator"></div>
+                        <span>Player 1</span>
+                    </div>
+                    <div id="player2" class="player player2">
+                        <div class="player-indicator"></div>
+                        <span>Player 2</span>
+                    </div>
+                </div>
+                
+                <div id="gameResult" class="game-result hidden"></div>
+                <button id="rematchBtn" class="btn btn-primary hidden">Rematch</button>
+                <button id="newGameBtn" class="btn btn-secondary">New Game Room</button>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>Game History</h3>
+            <div id="gameHistory" class="game-history">
+                <p>No games played yet</p>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/game.js"></script>
+</body>
+</html>
