@@ -24,6 +24,18 @@ let savedRooms = JSON.parse(localStorage.getItem('connect4Rooms') || '[]');
 let practiceMode = false;
 let connectionCheckInterval = null;
 
+// Get or create persistent player ID
+function getPlayerId() {
+    let playerId = localStorage.getItem('connect4PlayerId');
+    if (!playerId) {
+        playerId = 'player_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('connect4PlayerId', playerId);
+    }
+    return playerId;
+}
+
+const playerId = getPlayerId();
+
 linkInput.value = window.location.href;
 shareLink.classList.remove('hidden');
 
@@ -272,6 +284,11 @@ function saveRoomToLocalStorage() {
         }
         localStorage.setItem('connect4Rooms', JSON.stringify(savedRooms));
     }
+    
+    // Also save which player number we are in this room
+    const roomPlayers = JSON.parse(localStorage.getItem('connect4RoomPlayers') || '{}');
+    roomPlayers[roomId] = playerNumber;
+    localStorage.setItem('connect4RoomPlayers', JSON.stringify(roomPlayers));
 }
 
 function loadGameHistory() {
@@ -299,11 +316,31 @@ function loadGameHistory() {
         });
 }
 
-socket.emit('join-room', roomId);
+socket.emit('join-room', { roomId, playerId });
 
 socket.on('player-number', (number) => {
     playerNumber = number;
     gameStatus.textContent = `You are Player ${number}`;
+});
+
+socket.on('welcome-back', (number) => {
+    playerNumber = number;
+    gameStatus.textContent = `Welcome back! You are Player ${number}`;
+    
+    // Show a toast notification
+    const toast = document.createElement('div');
+    toast.className = 'toast success';
+    toast.textContent = 'Successfully reconnected to your game!';
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.classList.add('show');
+    }, 100);
+    
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
 });
 
 socket.on('waiting-for-player', () => {

@@ -28,6 +28,8 @@ app.post('/api/create-room', async (req, res) => {
     const roomId = uuidv4();
     const gameState = {
         players: [],
+        playerIds: {},  // Maps player IDs to player numbers
+        socketToPlayer: {},  // Maps socket IDs to player IDs
         board: Array(6).fill(null).map(() => Array(7).fill(0)),
         currentPlayer: 1,
         winner: null,
@@ -65,7 +67,7 @@ app.get('/api/game-history/:roomId', async (req, res) => {
 io.on('connection', (socket) => {
     console.log('New client connected');
 
-    socket.on('join-room', async (roomId) => {
+    socket.on('join-room', async ({ roomId, playerId }) => {
         let game = games.get(roomId);
         
         if (!game) {
@@ -74,6 +76,9 @@ io.on('connection', (socket) => {
                 const savedState = await db.getGameState(roomId);
                 if (savedState) {
                     game = savedState;
+                    // Initialize maps if they don't exist (for old games)
+                    if (!game.playerIds) game.playerIds = {};
+                    if (!game.socketToPlayer) game.socketToPlayer = {};
                     games.set(roomId, game);
                 }
             }
@@ -87,23 +92,44 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         await db.updateRoomActivity(roomId);
         
-        if (game.players.length < 2 && !game.players.includes(socket.id)) {
-            game.players.push(socket.id);
-            socket.emit('player-number', game.players.length);
-            await db.saveGameState(roomId, game);
+        // Check if this player was already in the game
+        let playerNumber = game.playerIds[playerId];
+        
+        if (!playerNumber) {
+            // New player joining
+            if (Object.keys(game.playerIds).length < 2) {
+                playerNumber = Object.keys(game.playerIds).length + 1;
+                game.playerIds[playerId] = playerNumber;
+                if (!game.players.includes(socket.id)) {
+                    game.players.push(socket.id);
+                }
+            } else {
+                socket.emit('error', 'Game room is full');
+                return;
+            }
+        } else {
+            // Returning player
+            const oldSocketIndex = game.players.findIndex(id => game.socketToPlayer[id] === playerId);
+            if (oldSocketIndex !== -1) {
+                game.players[oldSocketIndex] = socket.id;
+            }
+            socket.emit('welcome-back', playerNumber);
         }
+        
+        game.socketToPlayer[socket.id] = playerId;
+        socket.emit('player-number', playerNumber);
+        await db.saveGameState(roomId, game);
 
         const score = await db.getScore(roomId);
         game.score = { player1: score.player1_wins, player2: score.player2_wins, draws: score.draws };
 
-        if (game.players.length === 2) {
+        if (Object.keys(game.playerIds).length === 2 && game.players.length === 2) {
             game.gameStarted = true;
             io.to(roomId).emit('game-start', game);
-            // Notify both players are connected
             io.to(roomId).emit('opponent-connected');
         } else {
             socket.emit('waiting-for-player');
-            if (game.players.length === 1) {
+            if (Object.keys(game.playerIds).length === 1) {
                 socket.emit('can-make-first-move');
             }
         }
@@ -116,8 +142,10 @@ io.on('connection', (socket) => {
         
         if (!game || game.winner) return;
         
-        const playerIndex = game.players.indexOf(socket.id);
-        if (playerIndex === -1 || playerIndex + 1 !== game.currentPlayer) {
+        const playerId = game.socketToPlayer[socket.id];
+        const playerNumber = game.playerIds[playerId];
+        
+        if (!playerNumber || playerNumber !== game.currentPlayer) {
             return;
         }
 
@@ -135,10 +163,11 @@ io.on('connection', (socket) => {
         
         if (!game || game.winner || !game.pendingMove) return;
         
-        const playerIndex = game.players.indexOf(socket.id);
+        const playerId = game.socketToPlayer[socket.id];
+        const playerNumber = game.playerIds[playerId];
         
         // Allow Player 1 to make moves before game starts
-        if (!game.gameStarted && playerIndex === 0 && game.currentPlayer === 1) {
+        if (!game.gameStarted && playerNumber === 1 && game.currentPlayer === 1) {
             const { row, column, player } = game.pendingMove;
             game.board[row][column] = player;
             game.moveHistory.push({ row, column, player });
@@ -156,7 +185,7 @@ io.on('connection', (socket) => {
             return;
         }
         
-        if (playerIndex === -1 || playerIndex + 1 !== game.currentPlayer) {
+        if (!playerNumber || playerNumber !== game.currentPlayer) {
             socket.emit('invalid-move', 'Not your turn');
             return;
         }
@@ -288,21 +317,21 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log('Client disconnected');
         for (const [roomId, game] of games.entries()) {
-            const playerIndex = game.players.indexOf(socket.id);
-            if (playerIndex !== -1) {
-                // Don't remove player, just mark as disconnected
-                socket.to(roomId).emit('opponent-disconnected', playerIndex + 1);
+            if (game.socketToPlayer && game.socketToPlayer[socket.id]) {
+                const playerId = game.socketToPlayer[socket.id];
+                const playerNumber = game.playerIds[playerId];
                 
-                // Set a timeout to remove player after 30 seconds
-                setTimeout(() => {
-                    const currentGame = games.get(roomId);
-                    if (currentGame && !io.sockets.sockets.get(socket.id)) {
-                        const idx = currentGame.players.indexOf(socket.id);
-                        if (idx !== -1) {
-                            currentGame.players.splice(idx, 1);
-                        }
+                if (playerNumber) {
+                    // Notify opponent of disconnection
+                    socket.to(roomId).emit('opponent-disconnected', playerNumber);
+                    
+                    // Clean up socket mappings but keep player ID mapping
+                    delete game.socketToPlayer[socket.id];
+                    const playerIndex = game.players.indexOf(socket.id);
+                    if (playerIndex !== -1) {
+                        game.players.splice(playerIndex, 1);
                     }
-                }, 30000);
+                }
             }
         }
     });
