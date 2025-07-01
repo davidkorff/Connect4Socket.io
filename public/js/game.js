@@ -305,7 +305,19 @@ socket.on('player-number', (number) => {
 socket.on('waiting-for-player', () => {
     gameStatus.innerHTML = `
         <div>Waiting for opponent... Share the link above!</div>
-        <button onclick="startPractice()" class="btn btn-small btn-secondary" style="margin-top: 10px">Practice While Waiting</button>
+        <div style="margin-top: 10px">
+            <button onclick="startPractice()" class="btn btn-small btn-secondary">Practice While Waiting</button>
+        </div>
+    `;
+});
+
+socket.on('can-make-first-move', () => {
+    canPlay = true;
+    gameStatus.innerHTML = `
+        <div>You can make the first move while waiting for your opponent!</div>
+        <div style="margin-top: 10px">
+            <button onclick="startPractice()" class="btn btn-small btn-secondary">Practice Instead</button>
+        </div>
     `;
 });
 
@@ -315,7 +327,15 @@ socket.on('game-start', (state) => {
     }
     gameState = state;
     canPlay = true;
-    gameStatus.textContent = `Game started! Player ${state.currentPlayer} goes first.`;
+    
+    // Check if Player 1 already made a move
+    const movesAlreadyMade = state.board.some(row => row.some(cell => cell !== 0));
+    if (movesAlreadyMade && state.currentPlayer === 2) {
+        gameStatus.textContent = `Game started! Player 1 already made their move. Player 2's turn!`;
+    } else {
+        gameStatus.textContent = `Game started! Player ${state.currentPlayer} goes first.`;
+    }
+    
     updateBoard();
     updateScoreDisplay();
     saveRoomToLocalStorage();
@@ -496,6 +516,24 @@ socket.on('practice-ended', () => {
         <div>Waiting for opponent... Share the link above!</div>
         <button onclick="startPractice()" class="btn btn-small btn-secondary" style="margin-top: 10px">Practice While Waiting</button>
     `;
+});
+
+socket.on('early-move-made', (state) => {
+    const lastMove = state.lastMove;
+    gameState = state;
+    
+    removePendingPiece();
+    pendingMove = null;
+    placePiece(lastMove.row, lastMove.column, lastMove.player);
+    updateBoard(false);
+    
+    gameStatus.innerHTML = `
+        <div>Your move has been made! Waiting for opponent to join and play...</div>
+        <div style="margin-top: 10px">
+            <button onclick="startPractice()" class="btn btn-small btn-secondary">Practice While Waiting</button>
+        </div>
+    `;
+    canPlay = false;
 });
 
 rematchBtn.addEventListener('click', () => {

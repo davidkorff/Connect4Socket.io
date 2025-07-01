@@ -35,7 +35,9 @@ app.post('/api/create-room', async (req, res) => {
         pendingMove: null,
         score: { player1: 0, player2: 0, draws: 0 },
         practiceMode: false,
-        practiceBoard: null
+        practiceBoard: null,
+        gameStarted: false,
+        moveHistory: []
     };
     
     games.set(roomId, gameState);
@@ -95,9 +97,13 @@ io.on('connection', (socket) => {
         game.score = { player1: score.player1_wins, player2: score.player2_wins, draws: score.draws };
 
         if (game.players.length === 2) {
+            game.gameStarted = true;
             io.to(roomId).emit('game-start', game);
         } else {
             socket.emit('waiting-for-player');
+            if (game.players.length === 1) {
+                socket.emit('can-make-first-move');
+            }
         }
 
         socket.emit('game-state', game);
@@ -128,6 +134,26 @@ io.on('connection', (socket) => {
         if (!game || game.winner || !game.pendingMove) return;
         
         const playerIndex = game.players.indexOf(socket.id);
+        
+        // Allow Player 1 to make moves before game starts
+        if (!game.gameStarted && playerIndex === 0 && game.currentPlayer === 1) {
+            const { row, column, player } = game.pendingMove;
+            game.board[row][column] = player;
+            game.moveHistory.push({ row, column, player });
+            
+            const moveData = {
+                row,
+                column,
+                player: player
+            };
+            
+            game.currentPlayer = 2;
+            game.pendingMove = null;
+            await db.saveGameState(roomId, game);
+            socket.emit('early-move-made', { ...game, lastMove: moveData });
+            return;
+        }
+        
         if (playerIndex === -1 || playerIndex + 1 !== game.currentPlayer) {
             socket.emit('invalid-move', 'Not your turn');
             return;
